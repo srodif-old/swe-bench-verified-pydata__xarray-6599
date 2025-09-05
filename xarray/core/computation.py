@@ -1905,6 +1905,22 @@ def polyval(
     coeffs = coeffs.reindex(
         {degree_dim: np.arange(max_deg + 1)}, fill_value=0, copy=False
     )
+    
+    # Special handling for datetime data with timedelta coordinates
+    from .dataarray import DataArray
+    if isinstance(coord, DataArray):
+        # If data is datetime and there's a timedelta coordinate with same name as the dimension,
+        # use the coordinate values for polynomial evaluation instead of the data values
+        if (coord.dtype.kind == "M" and  # datetime data
+            len(coord.dims) == 1 and  # single dimension
+            coord.dims[0] in coord.coords and  # coordinate exists with same name
+            coord.coords[coord.dims[0]].dtype.kind == "m"):  # timedelta coordinate
+            
+            # Create a new DataArray using the timedelta coordinate as data
+            coord_name = coord.dims[0]
+            timedelta_coord = coord.coords[coord_name]
+            coord = coord.copy(data=timedelta_coord.data)
+    
     coord = _ensure_numeric(coord)  # type: ignore # https://github.com/python/mypy/issues/1533 ?
 
     # using Horner's method
@@ -1931,61 +1947,23 @@ def _ensure_numeric(data: T_Xarray) -> T_Xarray:
         Variables with datetime64 dtypes converted to float64.
     """
     from .dataset import Dataset
-    from .dataarray import DataArray
 
     def to_floatable(x: DataArray) -> DataArray:
-        # Convert the data if it's datetime/timedelta
-        new_data = x.data
         if x.dtype.kind in "mM":
             offset = (
                 np.timedelta64(0, "ns") if x.dtype.kind == "m"
                 else np.datetime64("1970-01-01")
             )
-            # For timedelta data, convert to seconds for more reasonable scaling
-            datetime_unit = "s" if x.dtype.kind == "m" else "ns"
-            new_data = datetime_to_numeric(
-                x.data,
-                offset=offset,
-                datetime_unit=datetime_unit,
-            )
-
-        # Convert coordinates if they are datetime/timedelta
-        new_coords = {}
-        coords_changed = False
-        for coord_name, coord_var in x.coords.items():
-            if coord_var.dtype.kind in "mM":
-                # For timedelta, use zero offset; for datetime, use epoch
-                offset = (
-                    np.timedelta64(0, "ns") if coord_var.dtype.kind == "m"
-                    else np.datetime64("1970-01-01")
-                )
-                # For timedelta coordinates, convert to seconds for more reasonable scaling
-                datetime_unit = "s" if coord_var.dtype.kind == "m" else "ns"
-                new_coord_data = datetime_to_numeric(
-                    coord_var.data,
+            # For timedelta data, convert to nanoseconds to preserve original scaling
+            datetime_unit = "ns"
+            return x.copy(
+                data=datetime_to_numeric(
+                    x.data,
                     offset=offset,
                     datetime_unit=datetime_unit,
-                )
-                new_coords[coord_name] = (coord_var.dims, new_coord_data)
-                coords_changed = True
-            else:
-                new_coords[coord_name] = coord_var
-
-        # If nothing changed, return original
-        if new_data is x.data and not coords_changed:
-            return x
-        
-        # Create new DataArray with modified data and/or coordinates
-        if coords_changed:
-            return DataArray(
-                new_data,
-                dims=x.dims,
-                coords=new_coords,
-                name=x.name,
-                attrs=x.attrs
+                ),
             )
-        else:
-            return x.copy(data=new_data)
+        return x
 
     if isinstance(data, Dataset):
         return data.map(to_floatable)
