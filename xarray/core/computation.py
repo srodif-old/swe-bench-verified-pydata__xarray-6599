@@ -1905,6 +1905,22 @@ def polyval(
     coeffs = coeffs.reindex(
         {degree_dim: np.arange(max_deg + 1)}, fill_value=0, copy=False
     )
+    
+    # Special handling for datetime data with timedelta coordinates
+    from .dataarray import DataArray
+    if isinstance(coord, DataArray):
+        # If data is datetime and there's a timedelta coordinate with same name as the dimension,
+        # use the coordinate values for polynomial evaluation instead of the data values
+        if (coord.dtype.kind == "M" and  # datetime data
+            len(coord.dims) == 1 and  # single dimension
+            coord.dims[0] in coord.coords and  # coordinate exists with same name
+            coord.coords[coord.dims[0]].dtype.kind == "m"):  # timedelta coordinate
+            
+            # Create a new DataArray using the timedelta coordinate as data
+            coord_name = coord.dims[0]
+            timedelta_coord = coord.coords[coord_name]
+            coord = coord.copy(data=timedelta_coord.data)
+    
     coord = _ensure_numeric(coord)  # type: ignore # https://github.com/python/mypy/issues/1533 ?
 
     # using Horner's method
@@ -1934,11 +1950,17 @@ def _ensure_numeric(data: T_Xarray) -> T_Xarray:
 
     def to_floatable(x: DataArray) -> DataArray:
         if x.dtype.kind in "mM":
+            offset = (
+                np.timedelta64(0, "ns") if x.dtype.kind == "m"
+                else np.datetime64("1970-01-01")
+            )
+            # For timedelta data, convert to nanoseconds to preserve original scaling
+            datetime_unit = "ns"
             return x.copy(
                 data=datetime_to_numeric(
                     x.data,
-                    offset=np.datetime64("1970-01-01"),
-                    datetime_unit="ns",
+                    offset=offset,
+                    datetime_unit=datetime_unit,
                 ),
             )
         return x

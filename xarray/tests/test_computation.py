@@ -2010,6 +2010,22 @@ def test_where_attrs() -> None:
             ),
             id="datetime",
         ),
+        pytest.param(
+            # Test polyval with datetime data and timedelta coordinates
+            # This tests the case where we want to evaluate polynomial at relative time offsets
+            xr.DataArray(
+                np.array(["2021-01-01", "2021-01-02", "2021-01-03"], dtype="datetime64[ns]"),
+                dims="time", 
+                coords={"time": np.array([0, 86400, 172800], dtype="timedelta64[s]")}
+            ),
+            xr.DataArray([1, 2], dims="degree", coords={"degree": [0, 1]}),
+            xr.DataArray(
+                [1, 1 + 2*86400*1e9, 1 + 2*172800*1e9],  # 1 + 2*x where x is nanoseconds
+                dims="time",
+                coords={"time": np.array([0, 86400, 172800], dtype="timedelta64[s]")}
+            ),
+            id="datetime-data-timedelta-coords",
+        ),
     ],
 )
 def test_polyval(
